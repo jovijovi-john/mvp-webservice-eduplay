@@ -186,6 +186,7 @@ io.on("connection", (socket) => {
     const { pin, user }: { pin: string; user: UserType } = data;
     console.log(data);
     const room = rooms[pin];
+    let error: string | null = null;
 
     if (room) {
       room.users[user.nickname] = { ...user, connection: socket.id };
@@ -194,18 +195,26 @@ io.on("connection", (socket) => {
       if (!room.quizStarted) {
         socket.join(room.pin);
       } else {
-        console.log("O quiz ja startou");
+        error = "O quiz Já Startou";
       }
+
+      io.to(socket.id).emit("room-credentials", {
+        url: room.url,
+        error,
+      });
 
       console.log(rooms[pin]);
 
       // Guardando o usuário e o nickname dele num hashmap de conexões
       connections[socket.id] = { room: pin, nickname: user.nickname };
     } else {
-      console.log("Sala não existe!");
-    }
+      error = "Sala não Existe";
+      console.log(error);
 
-    // Implementar login antes com JWT via rest
+      io.to(socket.id).emit("room-credentials", {
+        error,
+      });
+    }
   });
 
   socket.on("get-users-room", (data) => {
@@ -222,31 +231,30 @@ io.on("connection", (socket) => {
 
   socket.on("start-quiz", (data) => {
     rooms[data.pin].quizStarted = true;
-    // const {url} = data
   });
 
-  socket.on("start-question", (data) => {
-    try {
-      const room = rooms[data.pin];
-      console.log("start-question");
-      let currentQuestion = room.currentQuestion;
+  // socket.on("start-question", (data) => {
+  //   try {
+  //     const room = rooms[data.pin];
+  //     console.log("start-question");
+  //     let currentQuestion = room.currentQuestion;
 
-      if (currentQuestion < 6) {
-        if (currentQuestion === 0) {
-          rooms[data.pin].quizStarted = true;
-        }
+  //     if (currentQuestion < 6) {
+  //       if (currentQuestion === 0) {
+  //         rooms[data.pin].quizStarted = true;
+  //       }
 
-        io.to(data.pin).emit("current-question", {
-          question: rooms[data.pin].questions[currentQuestion++],
-          currentQuestion,
-        });
-      } else {
-        console.log("As questões acabaram!");
-      }
-    } catch (err) {
-      console.log(err);
-    }
-  });
+  //       io.to(data.pin).emit("current-question", {
+  //         question: rooms[data.pin].questions[currentQuestion++],
+  //         currentQuestion,
+  //       });
+  //     } else {
+  //       console.log("As questões acabaram!");
+  //     }
+  //   } catch (err) {
+  //     console.log(err);
+  //   }
+  // });
 
   socket.on("disconnect", (reason) => {
     if (socket.handshake.query.deviceType === "mobile") {
@@ -269,50 +277,79 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Evento sem o uso da URL
   socket.on("send-answer", (data) => {
     const {
       answerNumber,
       correct,
-      questionNumber,
       pin,
     }: {
       answerNumber: 1 | 2 | 3 | 4;
       correct: boolean;
-      questionNumber: 1 | 2 | 3 | 4;
       pin: string;
     } = data;
 
-    console.log("send-answer");
-    console.log(rooms[pin]);
+    const { currentQuestion, url } = rooms[pin];
 
-    // Post /opcaoA
+    // Incrementando a quantidade de resposta a uma determinada opção [1, 2, 3 ou 4]
+    rooms[pin].questionnaireStatistics[currentQuestion][
+      "answer" + answerNumber
+    ]++;
 
-    try {
-      console.log(rooms[pin].questionnaireStatistics);
-    } catch {
-      console.log("erro ao tentar pegar o questionario");
+    // Incrementando a quantidade de erros ou acertos em determinada questão
+    if (correct) {
+      rooms[pin].questionnaireStatistics[currentQuestion].successes!++;
+    } else {
+      rooms[pin].questionnaireStatistics[currentQuestion].errors!++;
     }
 
+    console.log(rooms[pin].questionnaireStatistics[currentQuestion]);
+  });
+
+  // Evento com uso da URL
+  /*
+  socket.on("send-answer", (data) => {
+    const {
+      answerNumber,
+      correct,
+      pin,
+    }: {
+      answerNumber: 1 | 2 | 3 | 4;
+      correct: boolean;
+      pin: string;
+    } = data;
+
+    const { currentQuestion, url } = rooms[pin];
+
     try {
-      rooms[pin].questionnaireStatistics[questionNumber].elementarySchool[
-        "answer" + answerNumber
-      ]++;
+      fetch(`${url}/tv3/current-service/apps/100/nodes/${answerNumber}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "select",
+        }),
+      }).then((data) => {
+        // Incrementando a quantidade de resposta a uma determinada opção [1, 2, 3 ou 4]
+        rooms[pin].questionnaireStatistics[currentQuestion][
+          "answer" + answerNumber
+        ]++;
 
-      if (correct) {
-        rooms[pin].questionnaireStatistics[questionNumber].elementarySchool
-          .successes!++;
-      } else {
-        rooms[pin].questionnaireStatistics[questionNumber].elementarySchool
-          .errors!++;
-      }
+        // Incrementando a quantidade de erros ou acertos em determinada questão
+        if (correct) {
+          rooms[pin].questionnaireStatistics[currentQuestion].successes!++;
+        } else {
+          rooms[pin].questionnaireStatistics[currentQuestion].errors!++;
+        }
 
-      console.log(
-        rooms[pin].questionnaireStatistics[questionNumber].elementarySchool
-      );
+        console.log(rooms[pin].questionnaireStatistics[currentQuestion]);
+      });
     } catch (err) {
       console.log(err.message);
     }
   });
+  */
 
   socket.on("get-statistics", (data) => {
     const {
@@ -323,8 +360,7 @@ io.on("connection", (socket) => {
       questionNumber: 1 | 2 | 3 | 4 | 5 | 6;
     } = data;
 
-    const statistics =
-      rooms[pin].questionnaireStatistics[questionNumber].elementarySchool;
+    const statistics = rooms[pin].questionnaireStatistics[questionNumber];
     const usersLength = Object.values(rooms[pin].users).length;
 
     // quantidade de alunos
@@ -341,14 +377,14 @@ io.on("connection", (socket) => {
     // }
 
     socket.emit("send-statistics", {
-      statistics:
-        rooms[pin].questionnaireStatistics[questionNumber].elementarySchool,
+      statistics: rooms[pin].questionnaireStatistics[questionNumber],
     });
   });
 });
 
 app.post("/create-room", (req: Request, res: Response) => {
   const { url, level } = req.body;
+  console.log(req.body);
 
   let pin: string;
 
@@ -361,118 +397,57 @@ app.post("/create-room", (req: Request, res: Response) => {
     level,
     questionnaireStatistics: [
       {
-        elementarySchool: {
-          answer1: 1,
-          answer2: 2,
-          answer3: 0,
-          answer4: 1,
-          successes: 2,
-          errors: 2,
-        },
-
-        highSchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
+        answer1: 0,
+        answer2: 0,
+        answer3: 0,
+        answer4: 0,
+        successes: 0,
+        errors: 0,
       },
-      {
-        elementarySchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
 
-        highSchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
+      {
+        answer1: 0,
+        answer2: 0,
+        answer3: 0,
+        answer4: 0,
+        successes: 0,
+        errors: 0,
       },
-      {
-        elementarySchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
 
-        highSchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
+      {
+        answer1: 0,
+        answer2: 0,
+        answer3: 0,
+        answer4: 0,
+        successes: 0,
+        errors: 0,
       },
-      {
-        elementarySchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
 
-        highSchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
+      {
+        answer1: 0,
+        answer2: 0,
+        answer3: 0,
+        answer4: 0,
+        successes: 0,
+        errors: 0,
       },
-      {
-        elementarySchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
 
-        highSchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
+      {
+        answer1: 0,
+        answer2: 0,
+        answer3: 0,
+        answer4: 0,
+        successes: 0,
+        errors: 0,
       },
-      {
-        elementarySchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
 
-        highSchool: {
-          answer1: 0,
-          answer2: 0,
-          answer3: 0,
-          answer4: 0,
-          successes: 0,
-          errors: 0,
-        },
+      {
+        answer1: 0,
+        answer2: 0,
+        answer3: 0,
+        answer4: 0,
+        successes: 0,
+        errors: 0,
       },
     ],
     questions: Questionnaires[level],
@@ -486,9 +461,37 @@ app.post("/create-room", (req: Request, res: Response) => {
 });
 
 app.get("/start-question/:pin", (req: Request, res: Response) => {
-  res.json({
-    pin: req.params.pin,
+  const { pin } = req.params;
+  const room = rooms[pin];
+  let currentQuestion = room.currentQuestion;
+
+  if (room) {
+    if (room.currentQuestion < 6) {
+      if (room.currentQuestion === 0) {
+        room.quizStarted = true;
+      }
+
+      // Disparando o evento websocket para os usuários conectados na sala
+      io.to(pin).emit("current-question", {
+        currentQuestion,
+        question: rooms[pin].questions[rooms[pin].currentQuestion++],
+      });
+
+      return res
+        .status(200)
+        .json({ currentQuestion, question: room.questions[currentQuestion] });
+    }
+
+    return res.status(404).json({ error: "Questionnaire ended" });
+  }
+
+  return res.status(404).json({
+    error: "Invalid Pin",
   });
+});
+
+app.get("/", (req: Request, res: Response) => {
+  return res.send("hello world");
 });
 
 server.listen(process.env.PORT, () => {
